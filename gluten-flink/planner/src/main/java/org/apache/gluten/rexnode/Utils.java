@@ -16,15 +16,25 @@
  */
 package org.apache.gluten.rexnode;
 
+import io.github.zhztheplayer.velox4j.expression.CastTypedExpr;
+import io.github.zhztheplayer.velox4j.expression.TypedExpr;
 import io.github.zhztheplayer.velox4j.serializable.ISerializableRegistry;
+import io.github.zhztheplayer.velox4j.type.*;
 import io.github.zhztheplayer.velox4j.variant.VariantRegistry;
+
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 
 import java.util.List;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Utility to store some useful functions. */
 public class Utils {
+    private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
 
     private static boolean registryInitialized = false;
 
@@ -45,5 +55,43 @@ public class Utils {
             VariantRegistry.registerAll();
             ISerializableRegistry.registerAll();
         }
+    }
+
+    private static final List<Type> NUMBER_TYPE_PRIORITY_LIST = List.of(
+        new TinyIntType(),
+        new SmallIntType(),
+        new IntegerType(),
+        new BigIntType(),
+        new RealType(),
+        new DoubleType()
+    );
+
+    private static int getNumberTypePriority(Type type) {
+        int index = -1;
+        for (int i = 0; i < NUMBER_TYPE_PRIORITY_LIST.size(); ++i) {
+            if (NUMBER_TYPE_PRIORITY_LIST.get(i).getClass().equals((type.getClass()))) {
+                index = i;
+                break;
+            }
+        }
+        if (index == -1) {
+            throw new RuntimeException("Unsupported type: " + type.getClass().getName());
+        }
+        return index;
+    }
+
+    public static List<TypedExpr> promoteTypeForNumberExpressions(List<TypedExpr> expressions) {
+        Type targetType = expressions.stream()
+            .map(expr -> {
+                Type returnType = expr.getReturnType();
+                int priority = getNumberTypePriority(returnType);
+            return new Tuple2<>(priority, returnType);
+        })
+        .max((t1, t2) -> Integer.compare(t1.f0, t2.f0))
+        .orElseThrow(() -> new RuntimeException("No expressions found")).f1;
+
+        return expressions.stream()
+            .map(expr -> expr.getReturnType().equals(targetType) ? expr : CastTypedExpr.create(targetType, expr, false))
+            .collect(Collectors.toList());
     }
 }
