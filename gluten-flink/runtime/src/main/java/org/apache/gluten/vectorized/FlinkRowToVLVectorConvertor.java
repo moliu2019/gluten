@@ -22,6 +22,7 @@ import io.github.zhztheplayer.velox4j.data.RowVector;
 import io.github.zhztheplayer.velox4j.session.Session;
 import io.github.zhztheplayer.velox4j.type.BigIntType;
 import io.github.zhztheplayer.velox4j.type.BooleanType;
+import io.github.zhztheplayer.velox4j.type.DoubleType;
 import io.github.zhztheplayer.velox4j.type.IntegerType;
 import io.github.zhztheplayer.velox4j.type.RowType;
 import io.github.zhztheplayer.velox4j.type.TimestampType;
@@ -32,6 +33,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.TimeStampMilliVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -41,6 +43,7 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.binary.BinaryStringData;
+import org.apache.gluten.vectorized.VectorGenericRowAccessor;
 
 
 import java.lang.reflect.Field;
@@ -68,7 +71,13 @@ public class FlinkRowToVLVectorConvertor {
                 bigIntVector.setSafe(0, row.getLong(i));
                 bigIntVector.setValueCount(1);
                 arrowVectors.add(i, bigIntVector);
-            } else if (fieldType instanceof VarCharType) {
+            } else if (fieldType instanceof DoubleType) {
+                Float8Vector doubleVector = new Float8Vector(rowType.getNames().get(i), allocator);
+                doubleVector.setSafe(0, row.getDouble(i));
+                doubleVector.setValueCount(1);
+                arrowVectors.add(i, doubleVector);
+            }
+            else if (fieldType instanceof VarCharType) {
                 VarCharVector stringVector = new VarCharVector(rowType.getNames().get(i), allocator);
                 stringVector.setSafe(0, row.getString(i).toBytes());
                 stringVector.setValueCount(1);
@@ -136,6 +145,7 @@ public class FlinkRowToVLVectorConvertor {
         // TODO: support more types
         BaseVector loadedVector = null;
         FieldVector structVector = null;
+
         try{
             loadedVector = rowVector.loadedVector();
             // The result is StructVector
@@ -143,26 +153,12 @@ public class FlinkRowToVLVectorConvertor {
                 allocator,
                 loadedVector);
             final List<FieldVector> fieldVectors = structVector.getChildrenFromFields();
+            List<VectorGenericRowAccessor> accessors = buildFieldVectorGenericRowAccessors(fieldVectors);
             List<RowData> rowDatas = new ArrayList<>(rowVector.getSize());
             for (int j = 0; j < rowVector.getSize(); j++) {
                 List<Object> fieldValues = new ArrayList<>(rowType.size());
                 for (int i = 0; i < rowType.size(); i++) {
-                    Type fieldType = rowType.getChildren().get(i);
-                    if (fieldType instanceof BooleanType) {
-                        // BitVector returns are integer, need to convert to boolean
-                        fieldValues.add(i, ((BitVector) fieldVectors.get(i)).get(j) != 0);
-                    } else if (fieldType instanceof IntegerType) {
-                        fieldValues.add(i, ((IntVector) fieldVectors.get(i)).get(j));
-                    } else if (fieldType instanceof BigIntType) {
-                        fieldValues.add(i, ((BigIntVector) fieldVectors.get(i)).get(j));
-                    } else if (fieldType instanceof VarCharType) {
-                        fieldValues.add(
-                            i,
-                            BinaryStringData.fromBytes(
-                                    ((VarCharVector) fieldVectors.get(i)).get(j)));
-                    } else {
-                        throw new RuntimeException("Unsupported field type: " + fieldType);
-                    }
+                    fieldValues.add(i, accessors.get(i).get(j));
                 }
                 rowDatas.add(GenericRowData.of(fieldValues.toArray()));
             }
@@ -179,4 +175,11 @@ public class FlinkRowToVLVectorConvertor {
         }
     }
 
+    private static List<VectorGenericRowAccessor> buildFieldVectorGenericRowAccessors(List<FieldVector> vectors) {
+        List<VectorGenericRowAccessor> accessors = new ArrayList<>();
+        for (int i = 0; i < vectors.size(); ++i) {
+            accessors.add(VectorGenericRowAccessor.initAccessor(vectors.get(i)));
+        }
+        return accessors;
+    }
 }

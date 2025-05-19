@@ -38,9 +38,12 @@ class ScanTest extends GlutenStreamingTestBase {
     @BeforeEach
     public void before() throws Exception {
         super.before();
-        List<Row> rows =
-                Arrays.asList(Row.of(1, 1L, "1"), Row.of(2, 2L, "2"), Row.of(3, 3L, "3"));
-        createSimpleBoundedValuesTable("MyTable", "a int, b bigint, c string", rows);
+        List<Row> rows = Arrays.asList(
+                    Row.of(1, 1L, "1", 0.1),
+                    Row.of(2, 2L, "2", 1.2),
+                    Row.of(3, 3L, "3", 10.1));
+        createSimpleBoundedValuesTable(
+            "MyTable", "a int, b bigint, c string, d double", rows);
     }
 
     @Test
@@ -48,6 +51,12 @@ class ScanTest extends GlutenStreamingTestBase {
         String query = "select a, b as b,c, a > 2 from MyTable where a > 0";
         LOG.info("execution plan: {}", explainExecutionPlan(query));
         runAndCheck(query, Arrays.asList("+I[1, 1, 1, false]", "+I[2, 2, 2, false]", "+I[3, 3, 3, true]"));
+    }
+
+    @Test
+    void testScanDouble() {
+        String query = "select d from MyTable where a > 0";
+        runAndCheck(query, Arrays.asList("+I[0.1]", "+I[1.2]", "+I[10.1]"));
     }
 }
 
