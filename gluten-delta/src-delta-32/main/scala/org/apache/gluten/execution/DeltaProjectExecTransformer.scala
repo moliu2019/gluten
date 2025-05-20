@@ -85,8 +85,15 @@ case class DeltaProjectExecTransformer(projectList: Seq[NamedExpression], child:
             extraMetrics :+= (im.prettyName, metric)
             child
         }
-        Alias(child = newChild, name = alias.name)(alias.exprId)
-      case other => other
+        alias.copy(child = newChild)
+      case other =>
+        other
+          .transformUp {
+            case im @ IncrementMetric(child, metric) =>
+              extraMetrics :+= (im.prettyName, metric)
+              child
+          }
+          .asInstanceOf[NamedExpression]
     }
   }
 }
